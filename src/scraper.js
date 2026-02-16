@@ -1,10 +1,14 @@
-import { chromium } from 'playwright';
+import puppeteer from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
 dotenv.config();
+
+// Add stealth plugin
+puppeteer.use(StealthPlugin());
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,30 +28,28 @@ class InstagramScraper {
   async initialize() {
     console.log('🚀 Initializing browser...');
 
-    this.browser = await chromium.launch({
-      headless: this.headless,
+    this.browser = await puppeteer.launch({
+      headless: this.headless ? 'new' : false,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-blink-features=AutomationControlled',
         '--disable-web-security',
-      ]
+      ],
+      executablePath: process.env.CHROME_PATH || undefined,
     });
 
-    const context = await this.browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      viewport: { width: 1920, height: 1080 },
-      locale: 'ko-KR',
-    });
+    this.page = await this.browser.newPage();
 
-    this.page = await context.newPage();
+    // Set viewport
+    await this.page.setViewport({ width: 1920, height: 1080 });
 
-    // Add stealth scripts
-    await this.page.addInitScript(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => false });
-      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-      Object.defineProperty(navigator, 'languages', { get: () => ['ko-KR', 'ko', 'en-US', 'en'] });
-      window.chrome = { runtime: {} };
+    // Set user agent
+    await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
+    // Set language
+    await this.page.setExtraHTTPHeaders({
+      'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
     });
 
     console.log('✅ Browser initialized');
@@ -61,32 +63,36 @@ class InstagramScraper {
 
     try {
       console.log('🔐 Logging in to Instagram...');
-      await this.page.goto('https://www.instagram.com/accounts/login/', { waitUntil: 'networkidle' });
+      await this.page.goto('https://www.instagram.com/accounts/login/', { waitUntil: 'networkidle2' });
       await this.page.waitForTimeout(2000);
 
       // Accept cookies if present
       try {
-        await this.page.click('button:has-text("Allow all cookies")', { timeout: 3000 });
+        await this.page.waitForSelector('button:has-text("Allow all cookies")', { timeout: 3000 });
+        await this.page.click('button:has-text("Allow all cookies")');
       } catch (e) {
         // Cookie banner might not appear
       }
 
-      await this.page.fill('input[name="username"]', this.username);
-      await this.page.fill('input[name="password"]', this.password);
+      await this.page.waitForSelector('input[name="username"]');
+      await this.page.type('input[name="username"]', this.username, { delay: 100 });
+      await this.page.type('input[name="password"]', this.password, { delay: 100 });
       await this.page.click('button[type="submit"]');
 
       await this.page.waitForTimeout(5000);
 
       // Handle "Save Your Login Info" prompt
       try {
-        await this.page.click('button:has-text("Not now")', { timeout: 3000 });
+        const notNowButton = await this.page.waitForSelector('button:has-text("Not now")', { timeout: 3000 });
+        await notNowButton.click();
       } catch (e) {
         // Prompt might not appear
       }
 
       // Handle "Turn on Notifications" prompt
       try {
-        await this.page.click('button:has-text("Not Now")', { timeout: 3000 });
+        const notNowButton = await this.page.waitForSelector('button:has-text("Not Now")', { timeout: 3000 });
+        await notNowButton.click();
       } catch (e) {
         // Prompt might not appear
       }
@@ -102,7 +108,7 @@ class InstagramScraper {
   async navigateToProfile() {
     console.log(`📍 Navigating to @${this.targetAccount}...`);
     const profileUrl = `https://www.instagram.com/${this.targetAccount}/`;
-    await this.page.goto(profileUrl, { waitUntil: 'networkidle' });
+    await this.page.goto(profileUrl, { waitUntil: 'networkidle2' });
     await this.page.waitForTimeout(3000);
 
     if (this.screenshot) {
@@ -161,7 +167,7 @@ class InstagramScraper {
 
   async scrapePost(url) {
     try {
-      await this.page.goto(url, { waitUntil: 'networkidle' });
+      await this.page.goto(url, { waitUntil: 'networkidle2' });
       await this.page.waitForTimeout(2000);
 
       const postData = await this.page.evaluate(() => {
@@ -221,7 +227,6 @@ class InstagramScraper {
         data.location = locationElement ? locationElement.textContent.trim() : null;
 
         // Try to get comments count
-        const commentsLink = document.querySelector('a[href*="/comments/"]');
         data.commentsCount = '0';
 
         return data;
@@ -229,10 +234,9 @@ class InstagramScraper {
 
       // Try to get more accurate comments count
       try {
-        const commentsButton = await this.page.$('svg[aria-label*="Comment"], svg[aria-label*="댓글"]');
-        if (commentsButton) {
-          const commentsSection = await commentsButton.evaluateHandle(el => el.closest('section'));
-          const commentsText = await commentsSection.evaluate(el => el.textContent);
+        const commentsSection = await this.page.$('section');
+        if (commentsSection) {
+          const commentsText = await this.page.evaluate(el => el.textContent, commentsSection);
           const match = commentsText.match(/(\d+)\s*(comments|댓글)/i);
           if (match) {
             postData.commentsCount = match[1];
