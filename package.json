@@ -1,0 +1,26 @@
+{
+  "name": "instagram-scraper-pepsi",
+  "version": "1.0.0",
+  "description": "Instagram post scraper for Pepsi Korea account using Playwright Stealth",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "scrape": "node src/scraper.js",
+    "install-browser": "playwright install chromium"
+  },
+  "keywords": [
+    "instagram",
+    "scraper",
+    "playwright",
+    "stealth"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "playwright": "^1.49.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "dotenv": "^16.4.5"
+  }
+}
